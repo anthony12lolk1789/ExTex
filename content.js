@@ -1,4 +1,5 @@
 console.log('[Content] Script starting...');
+let spanEdit;
 
 // Cargar KaTeX manualmente si es necesario
 async function loadKaTeX() {
@@ -85,7 +86,7 @@ function renderLatex(text) {
     try {
         return katex.renderToString(text, {
             throwOnError: false,
-            displayMode: text.includes("\\["),
+            displayMode: text.includes("\\[") && text.includes("\\]"),
             output: 'html'
         });
     } catch (error) {
@@ -124,6 +125,29 @@ function extractLatexFormulas(text) {
     return formulas;
 }
 
+
+async function processLatexElementEdit(text , span) {
+    try {
+        // Extraer fórmulas
+        const container = document.createElement('span');
+        container.setAttribute('dir' , 'ltr');
+        container.className = span.className;
+        container.style.cssText = 'min-height: 0px';
+        container.textContent = text;
+        console.log("CONTAINER :  " , container);
+        // Reemplazar el elemento original
+        if (span.parentNode) {
+            console.log("ELEMENTO EDITADO SPAN : " , span);
+            console.log("ELEMENTO EDITADO SPAN.PARENTNODE : " , span.parentNode);
+            
+            span.parentNode.replaceChild(container, span);
+            console.log('[Content] Element updatedEdit successfully');
+        }
+    } catch (error) {
+        console.error('[Content] Processing error:', error);
+    }
+}
+
 // Función para procesar un elemento con LaTeX
 async function processLatexElement(element) {
     // Obtener el texto completo combinando todos los spans
@@ -136,7 +160,6 @@ async function processLatexElement(element) {
     } else {
         text = element.innerText;
     }
-    
     // Verificar si el texto contiene LaTeX
     if (!text.includes("\\(") && !text.includes("\\[")) {
         return;
@@ -156,10 +179,13 @@ async function processLatexElement(element) {
         // Crear nuevo contenedor manteniendo las clases originales
         const container = document.createElement('span');
         container.className = element.className;
+        console.log("ClassName of element: " + element.className);
         
         let currentText = text;
         let offset = 0;
-
+        for(const formula of formulas) {
+            console.log('valores en formulas for element:  '  +  formula.formula.trim());
+        }
         // Procesar cada fórmula
         for (const formula of formulas) {
             try {
@@ -208,16 +234,16 @@ async function processLatexElement(element) {
 async function processLatexElements() {
     if (isProcessing) return;
     isProcessing = true;
-    
+    console.log("within processLatexElements");
     try {
         if (!await checkKaTeX()) {
             console.error('[Content] KaTeX not available for processing');
             return;
         }
         
-        // console.log('[Content] Starting batch processing');
+        //console.log('[Content] Starting batch processing');
         const elements = document.querySelectorAll('span._ao3e.selectable-text.copyable-text');
-        // console.log('[Content] Found elements:', elements.length);
+        //console.log('[Content] Found elements:', elements.length);
         
         for (const element of elements) {
             await processLatexElement(element);
@@ -228,25 +254,49 @@ async function processLatexElements() {
         isProcessing = false;
     }
 }
+
 // Agregar observer para edición de mensajes
 function setupEditObserver() {
-    const editObserver = new MutationObserver((mutations) => {
+    const editObserver = new MutationObserver(async (mutations) => {
+        
         for (const mutation of mutations) {
-            if (mutation.target.querySelector('[data-icon="checkmark-medium"]')) {
-                setTimeout(() => {
-                    console.log('[Content] Message edit detected, reprocessing...');
-                    processLatexElements();
-                }, 100);
+            
+            // Asegurarse de que el target es un elemento con querySelectorAll
+            if (mutation.target.nodeType === Node.ELEMENT_NODE) {
+                const checkmarkElements = mutation.target.querySelectorAll('[data-icon="checkmark-medium"]');
+                // Verificar si existen elementos coincidentes
+                if (checkmarkElements.length > 0) {
+                    setTimeout(() => {
+                        const span = mutation.target.parentNode.querySelector('span._ao3e.selectable-text.copyable-text');
+                        const editedText = mutation.target.querySelector('span.selectable-text.copyable-text.false')?.textContent;                        
+                        if (editedText) {
+                          console.log('[Content] Message edit detected, reprocessing...');
+                          console.log('el texto en cuestion : ', editedText);
+                          if (span?.className) {
+                            processLatexElementEdit(editedText,span);
+                            
+                          }
+                        }
+                    },1500);
+                }
             }
         }
+        
+
     });
 
+    // Observar cambios en el contenido del mensaje
     editObserver.observe(document.body, {
         childList: true,
         subtree: true,
-        attributes: true
+        characterData: true, // Solo observar nodos de texto si es necesario
+        attributes: true // Observar atributos si necesitas procesar cambios específicos
     });
 }
+
+// Llamar a la función
+
+
 
 // Configurar el observer 
 function setupObserver() {
@@ -261,7 +311,7 @@ function setupObserver() {
             }
         }
         
-        if (shouldProcess && !isProcessing) {
+        if (shouldProcess && !isProcessing && document.querySelector('span.selectable-text.copyable-text.false')===null) {  
             // console.log('[Content] Changes detected, processing...');
             processLatexElements();
         }
@@ -269,10 +319,12 @@ function setupObserver() {
     
     observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        characterData: true,
+        atributes: true
     });
     
-    setupEditObserver();
+    setupEditObserver();    
     console.log('[Content] All observers setup complete');
 }
 
@@ -290,6 +342,8 @@ async function initialize() {
         console.log('[Content] KaTeX available, setting up...');
         setupObserver();
         await processLatexElements();
+
+        
     } else {
         console.error('[Content] KaTeX not available');
     }
@@ -297,31 +351,3 @@ async function initialize() {
 
 // Iniciar
 initialize();
-
-// Función de prueba
-window.testLaTeX = async (text = "\\[x^2\\]") => {
-    console.log('[Content] Testing LaTeX:', text);
-    
-    if (!await checkKaTeX()) {
-        console.error('[Content] KaTeX not available for testing');
-        return null;
-    }
-    
-    try {
-        const rendered = renderLatex(text);
-        if (rendered) {
-            const testDiv = document.createElement('div');
-            testDiv.innerHTML = rendered;
-            testDiv.style.cssText = 'padding: 10px; background-color: #f0f0f0; position: fixed; top: 10px; right: 10px; z-index: 9999;';
-            document.body.appendChild(testDiv);
-            setTimeout(() => testDiv.remove(), 5000);
-            return rendered;
-        }
-        return null;
-    } catch (error) {
-        console.error('[Content] Test error:', error);
-        return null;
-    }
-};
-
-console.log('[Content] Script loaded');
